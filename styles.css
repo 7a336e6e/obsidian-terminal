@@ -1,0 +1,181 @@
+/* ============================================
+   ObsidianTerm — Terminal Panel Styles
+   ============================================ */
+
+/* Panel container */
+.obsidian-terminal-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--background-primary);
+}
+
+/* ---- Tab bar ---- */
+
+.terminal-tab-bar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 4px;
+  background-color: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.terminal-tab-bar::-webkit-scrollbar {
+  height: 2px;
+}
+
+.terminal-tab-bar::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+}
+
+.terminal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Individual tab */
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 160px;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.terminal-tab:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.terminal-tab.is-active {
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+.terminal-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.terminal-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  flex-shrink: 0;
+}
+
+.terminal-tab-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.terminal-tab:hover .terminal-tab-close,
+.terminal-tab-close:hover {
+  opacity: 1;
+}
+
+.terminal-tab-close:hover {
+  background-color: var(--background-modifier-border);
+}
+
+/* Add new tab button */
+.terminal-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.terminal-tab-add:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.terminal-tab-add svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Terminal render area ---- */
+
+.terminal-render-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-instance-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+/* xterm.js overrides for Obsidian integration */
+.terminal-instance-container .xterm {
+  height: 100%;
+  padding: 4px 0 4px 8px;
+}
+
+.terminal-instance-container .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+.terminal-instance-container .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-instance-container .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+.terminal-instance-container .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* ---- Status bar ---- */
+
+.obsidian-terminal-statusbar {
+  cursor: pointer;
+}
+
+.obsidian-terminal-statusbar:hover {
+  color: var(--text-normal);
+}

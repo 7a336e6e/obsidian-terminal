@@ -1,0 +1,212 @@
+import {
+  App,
+  PluginSettingTab,
+  Setting,
+  TextComponent,
+  DropdownComponent,
+} from "obsidian";
+import type ObsidianTerminalPlugin from "./main";
+import { PluginSettings, CwdMode } from "./types";
+import { BUILTIN_PROFILES, getAllProfiles } from "./ShellProfile";
+import { getAllThemes, BUILTIN_THEMES } from "./ThemeManager";
+
+export class TerminalSettingTab extends PluginSettingTab {
+  plugin: ObsidianTerminalPlugin;
+
+  constructor(app: App, plugin: ObsidianTerminalPlugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    // ---- Shell ----
+    containerEl.createEl("h2", { text: "Shell" });
+
+    new Setting(containerEl)
+      .setName("Default profile")
+      .setDesc("Shell profile used for new terminals")
+      .addDropdown((dd) => {
+        const profiles = getAllProfiles(this.plugin.settings.customProfiles);
+        for (const p of profiles) {
+          dd.addOption(p.id, p.name);
+        }
+        dd.setValue(this.plugin.settings.defaultProfileId);
+        dd.onChange(async (val) => {
+          this.plugin.settings.defaultProfileId = val;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Login shell")
+      .setDesc("Start shell as a login shell (-l flag). Loads your .zprofile / .bash_profile.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.shellLoginMode)
+          .onChange(async (val) => {
+            this.plugin.settings.shellLoginMode = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // ---- Working directory ----
+    containerEl.createEl("h2", { text: "Working Directory" });
+
+    new Setting(containerEl)
+      .setName("Default directory")
+      .setDesc("Where new terminals open")
+      .addDropdown((dd) => {
+        dd.addOption("vault", "Vault root");
+        dd.addOption("active-note", "Active note's folder");
+        dd.addOption("custom", "Custom path");
+        dd.setValue(this.plugin.settings.cwdMode);
+        dd.onChange(async (val: string) => {
+          this.plugin.settings.cwdMode = val as CwdMode;
+          await this.plugin.saveSettings();
+          this.display(); // re-render to show/hide custom path
+        });
+      });
+
+    if (this.plugin.settings.cwdMode === "custom") {
+      new Setting(containerEl)
+        .setName("Custom path")
+        .setDesc("Absolute path for new terminals")
+        .addText((text) =>
+          text
+            .setPlaceholder("/Users/you/projects")
+            .setValue(this.plugin.settings.customCwd)
+            .onChange(async (val) => {
+              this.plugin.settings.customCwd = val;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    // ---- Appearance ----
+    containerEl.createEl("h2", { text: "Appearance" });
+
+    new Setting(containerEl)
+      .setName("Theme")
+      .setDesc("Terminal color theme. 'Obsidian Sync' matches your vault theme.")
+      .addDropdown((dd) => {
+        const themes = getAllThemes(this.plugin.settings.customThemes);
+        for (const t of themes) {
+          dd.addOption(t.id, t.name);
+        }
+        dd.setValue(this.plugin.settings.activeThemeId);
+        dd.onChange(async (val) => {
+          this.plugin.settings.activeThemeId = val;
+          await this.plugin.saveSettings();
+          this.plugin.refreshTerminalTheme();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Font family")
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.fontFamily)
+          .onChange(async (val) => {
+            this.plugin.settings.fontFamily = val;
+            await this.plugin.saveSettings();
+            this.plugin.refreshTerminalFont();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Font size")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.fontSize))
+          .onChange(async (val) => {
+            const n = parseInt(val, 10);
+            if (!isNaN(n) && n >= 8 && n <= 32) {
+              this.plugin.settings.fontSize = n;
+              await this.plugin.saveSettings();
+              this.plugin.refreshTerminalFont();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Cursor style")
+      .addDropdown((dd) => {
+        dd.addOption("block", "Block");
+        dd.addOption("underline", "Underline");
+        dd.addOption("bar", "Bar");
+        dd.setValue(this.plugin.settings.cursorStyle);
+        dd.onChange(async (val: string) => {
+          this.plugin.settings.cursorStyle = val as "block" | "underline" | "bar";
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Cursor blink")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.cursorBlink)
+          .onChange(async (val) => {
+            this.plugin.settings.cursorBlink = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Scrollback lines")
+      .setDesc("Number of lines to keep in terminal scrollback buffer")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.scrollback))
+          .onChange(async (val) => {
+            const n = parseInt(val, 10);
+            if (!isNaN(n) && n >= 100 && n <= 100000) {
+              this.plugin.settings.scrollback = n;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    // ---- Custom profiles ----
+    containerEl.createEl("h2", { text: "Custom Shell Profiles" });
+    containerEl.createEl("p", {
+      text: "Define custom shell profiles beyond the built-in zsh and bash.",
+      cls: "setting-item-description",
+    });
+
+    for (let i = 0; i < this.plugin.settings.customProfiles.length; i++) {
+      const profile = this.plugin.settings.customProfiles[i];
+      const s = new Setting(containerEl)
+        .setName(profile.name)
+        .setDesc(profile.shellPath)
+        .addButton((btn) =>
+          btn
+            .setButtonText("Remove")
+            .setWarning()
+            .onClick(async () => {
+              this.plugin.settings.customProfiles.splice(i, 1);
+              await this.plugin.saveSettings();
+              this.display();
+            })
+        );
+    }
+
+    new Setting(containerEl).addButton((btn) =>
+      btn.setButtonText("Add profile").onClick(async () => {
+        this.plugin.settings.customProfiles.push({
+          id: `custom-${Date.now()}`,
+          name: "Custom Shell",
+          shellPath: "/bin/sh",
+          args: [],
+          env: {},
+          icon: "terminal",
+        });
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+  }
+}
