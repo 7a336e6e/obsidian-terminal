@@ -18,6 +18,7 @@ export interface TerminalThemeDefinition {
 }
 
 export type CwdMode = "vault" | "active-note" | "custom";
+export type CursorStyle = "block" | "underline" | "bar";
 
 export interface PluginSettings {
   defaultProfileId: string;
@@ -29,13 +30,19 @@ export interface PluginSettings {
   customProfiles: TerminalProfile[];
   customThemes: TerminalThemeDefinition[];
   shellLoginMode: boolean;
-  cursorStyle: "block" | "underline" | "bar";
+  cursorStyle: CursorStyle;
   cursorBlink: boolean;
   scrollback: number;
+  restoreTabs: boolean;
+  confirmOnClose: boolean;
+  copyOnSelect: boolean;
+  pasteSanitize: boolean;
+  reuseTabOnExit: boolean;
+  __session?: SavedState;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
-  defaultProfileId: "zsh",
+  defaultProfileId: "default",
   cwdMode: "vault",
   customCwd: "",
   fontFamily: "Menlo, Monaco, 'Courier New', monospace",
@@ -47,6 +54,11 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   cursorStyle: "block",
   cursorBlink: true,
   scrollback: 5000,
+  restoreTabs: true,
+  confirmOnClose: true,
+  copyOnSelect: false,
+  pasteSanitize: true,
+  reuseTabOnExit: false,
 };
 
 export interface TerminalTab {

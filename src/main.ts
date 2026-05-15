@@ -2,7 +2,10 @@ import {
   Plugin,
   WorkspaceLeaf,
   TFile,
-  normalizePath,
+  Notice,
+} from "obsidian";
+import {
+  FileSystemAdapter,
 } from "obsidian";
 import {
   VIEW_TYPE_TERMINAL,
@@ -12,6 +15,7 @@ import {
 import { TerminalView } from "./TerminalView";
 import { TerminalSettingTab } from "./settings";
 import * as path from "path";
+import { spawnSync } from "child_process";
 
 export default class ObsidianTerminalPlugin extends Plugin {
   settings: PluginSettings;
@@ -20,17 +24,14 @@ export default class ObsidianTerminalPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // Register the terminal view
     this.registerView(VIEW_TYPE_TERMINAL, (leaf) => {
       return new TerminalView(leaf, this.settings, this.getVaultBasePath());
     });
 
-    // Ribbon icon
     this.addRibbonIcon("terminal", "Open terminal", () => {
       this.activateView();
     });
 
-    // Commands
     this.addCommand({
       id: "open-terminal",
       name: "Open terminal",
@@ -62,35 +63,74 @@ export default class ObsidianTerminalPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "close-terminal-tab",
+      name: "Close current terminal tab",
+      callback: () => {
+        const view = this.getTerminalView();
+        view?.closeActiveTab();
+      },
+    });
+
+    this.addCommand({
       id: "terminal-here",
       name: "Open terminal in current note's folder",
       callback: () => this.openTerminalHere(),
     });
 
-    // Settings tab
+    this.addCommand({
+      id: "clear-terminal",
+      name: "Clear terminal",
+      callback: () => {
+        const view = this.getTerminalView();
+        view?.getManager().getActiveInstance()?.clear();
+      },
+    });
+
+    this.addCommand({
+      id: "send-selection-to-terminal",
+      name: "Send selection to terminal",
+      callback: async () => {
+        const text = window.getSelection()?.toString();
+        if (!text) {
+          new Notice("No text selected.");
+          return;
+        }
+        await this.activateView();
+        const view = this.getTerminalView();
+        view?.getManager().getActiveInstance()?.write(text);
+      },
+    });
+
+    this.addCommand({
+      id: "find-in-terminal",
+      name: "Find in terminal",
+      callback: () => {
+        const view = this.getTerminalView();
+        if (view) {
+          view.showSearch();
+        } else {
+          this.activateView().then(() => this.getTerminalView()?.showSearch());
+        }
+      },
+    });
+
     this.addSettingTab(new TerminalSettingTab(this.app, this));
 
-    // Status bar item
     this.statusBarEl = this.addStatusBarItem();
-    this.statusBarEl.setText("Terminal");
+    this.updateStatusBar(0);
     this.statusBarEl.addClass("obsidian-terminal-statusbar");
     this.statusBarEl.addEventListener("click", () => this.toggleView());
 
-    // Listen for theme changes to refresh terminal colors
     this.registerEvent(
-      // @ts-ignore - css-change is a valid event
-      this.app.workspace.on("css-change", () => {
+      // css-change is undocumented but stable — fires when the Obsidian theme changes
+      this.app.workspace.on("css-change" as any, () => {
         this.refreshTerminalTheme();
       })
     );
 
-    // Listen for active file changes for CWD sync
     this.registerEvent(
       this.app.workspace.on("file-open", (file: TFile | null) => {
-        if (
-          file &&
-          this.settings.cwdMode === "active-note"
-        ) {
+        if (file && this.settings.cwdMode === "active-note") {
           const folderPath = this.resolveFileFolderPath(file);
           if (folderPath) {
             const view = this.getTerminalView();
@@ -102,33 +142,51 @@ export default class ObsidianTerminalPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
-    // Detach all terminal leaves — this triggers onClose on each view, which disposes processes
+    // Persist session before unloading
+    const view = this.getTerminalView();
+    if (view && this.settings.restoreTabs) {
+      view.serializeSession();
+      await this.saveSettings();
+    }
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TERMINAL);
   }
 
   // ------ View lifecycle ------
 
   async activateView(): Promise<void> {
+    if (!this.checkPython3()) return;
+
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_TERMINAL);
     if (existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]);
       return;
     }
 
-    // Create a horizontal split at the bottom of the workspace
     const leaf = this.app.workspace.getLeaf("split", "horizontal");
     await leaf.setViewState({
       type: VIEW_TYPE_TERMINAL,
       active: true,
     });
     this.app.workspace.revealLeaf(leaf);
+
+    // Wire up status bar count once the view is open
+    const view = this.getTerminalView();
+    if (view) {
+      view.onTabCountChanged = (n) => this.updateStatusBar(n);
+    }
   }
 
   private async toggleView(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_TERMINAL);
     if (existing.length > 0) {
-      // If visible, close it
+      // Persist session before closing
+      const view = this.getTerminalView();
+      if (view && this.settings.restoreTabs) {
+        view.serializeSession();
+        await this.saveSettings();
+      }
       existing[0].detach();
+      this.updateStatusBar(0);
     } else {
       await this.activateView();
     }
@@ -154,9 +212,8 @@ export default class ObsidianTerminalPlugin extends Plugin {
     const folderPath = this.resolveFileFolderPath(file);
     const view = this.getTerminalView();
     if (view) {
-      view.createNewTerminal(undefined, folderPath);
+      view.createNewTerminal(undefined, folderPath ?? undefined);
     } else {
-      // Open view first, then create terminal with cwd
       this.activateView().then(() => {
         setTimeout(() => {
           const v = this.getTerminalView();
@@ -180,7 +237,6 @@ export default class ObsidianTerminalPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-    // Push updated settings to the view
     const view = this.getTerminalView();
     view?.updateSettings(this.settings);
   }
@@ -201,6 +257,23 @@ export default class ObsidianTerminalPlugin extends Plugin {
 
   // ------ Helpers ------
 
+  private updateStatusBar(count: number): void {
+    if (!this.statusBarEl) return;
+    this.statusBarEl.setText(count > 0 ? `Terminal · ${count}` : "Terminal");
+  }
+
+  private checkPython3(): boolean {
+    const result = spawnSync("python3", ["--version"], { timeout: 3000 });
+    if (result.error || result.status !== 0) {
+      new Notice(
+        "ObsidianTerm: python3 not found. Install Python 3 and make sure it's on your PATH.",
+        8000
+      );
+      return false;
+    }
+    return true;
+  }
+
   private getTerminalView(): TerminalView | null {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TERMINAL);
     if (leaves.length === 0) return null;
@@ -208,14 +281,16 @@ export default class ObsidianTerminalPlugin extends Plugin {
   }
 
   private getVaultBasePath(): string {
-    // @ts-ignore — vault.adapter.basePath exists in desktop Obsidian
-    return this.app.vault.adapter.basePath || "";
+    const adapter = this.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) {
+      return adapter.getBasePath();
+    }
+    return (adapter as any).basePath || "";
   }
 
   private resolveFileFolderPath(file: TFile): string | null {
     const basePath = this.getVaultBasePath();
     if (!basePath) return null;
-
     const parentFolder = file.parent?.path || "";
     return path.join(basePath, parentFolder);
   }

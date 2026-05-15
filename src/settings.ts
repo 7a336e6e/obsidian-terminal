@@ -2,13 +2,12 @@ import {
   App,
   PluginSettingTab,
   Setting,
-  TextComponent,
-  DropdownComponent,
 } from "obsidian";
 import type ObsidianTerminalPlugin from "./main";
 import { PluginSettings, CwdMode } from "./types";
 import { BUILTIN_PROFILES, getAllProfiles } from "./ShellProfile";
-import { getAllThemes, BUILTIN_THEMES } from "./ThemeManager";
+import { getAllThemes } from "./ThemeManager";
+import { EditProfileModal } from "./modals";
 
 export class TerminalSettingTab extends PluginSettingTab {
   plugin: ObsidianTerminalPlugin;
@@ -66,7 +65,7 @@ export class TerminalSettingTab extends PluginSettingTab {
         dd.onChange(async (val: string) => {
           this.plugin.settings.cwdMode = val as CwdMode;
           await this.plugin.saveSettings();
-          this.display(); // re-render to show/hide custom path
+          this.display();
         });
       });
 
@@ -139,7 +138,7 @@ export class TerminalSettingTab extends PluginSettingTab {
         dd.addOption("bar", "Bar");
         dd.setValue(this.plugin.settings.cursorStyle);
         dd.onChange(async (val: string) => {
-          this.plugin.settings.cursorStyle = val as "block" | "underline" | "bar";
+          this.plugin.settings.cursorStyle = val as PluginSettings["cursorStyle"];
           await this.plugin.saveSettings();
         });
       });
@@ -170,18 +169,90 @@ export class TerminalSettingTab extends PluginSettingTab {
           })
       );
 
+    // ---- Behaviour ----
+    containerEl.createEl("h2", { text: "Behaviour" });
+
+    new Setting(containerEl)
+      .setName("Restore tabs on startup")
+      .setDesc("Re-open the same tabs (with their CWDs) when Obsidian starts.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.restoreTabs)
+          .onChange(async (val) => {
+            this.plugin.settings.restoreTabs = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Confirm before closing")
+      .setDesc("Show a confirmation dialog before closing a terminal that has a running process.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.confirmOnClose)
+          .onChange(async (val) => {
+            this.plugin.settings.confirmOnClose = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Copy on select")
+      .setDesc("Automatically copy selected text to the clipboard (like most terminal apps).")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.copyOnSelect)
+          .onChange(async (val) => {
+            this.plugin.settings.copyOnSelect = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Paste sanitization warning")
+      .setDesc("Show a notice before pasting text that contains newlines.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.pasteSanitize)
+          .onChange(async (val) => {
+            this.plugin.settings.pasteSanitize = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Reuse tab on shell exit")
+      .setDesc("When the shell exits, press Enter to restart it in the same tab instead of closing.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.reuseTabOnExit)
+          .onChange(async (val) => {
+            this.plugin.settings.reuseTabOnExit = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
     // ---- Custom profiles ----
     containerEl.createEl("h2", { text: "Custom Shell Profiles" });
     containerEl.createEl("p", {
-      text: "Define custom shell profiles beyond the built-in zsh and bash.",
+      text: "Define custom shell profiles beyond the built-in ones.",
       cls: "setting-item-description",
     });
 
     for (let i = 0; i < this.plugin.settings.customProfiles.length; i++) {
       const profile = this.plugin.settings.customProfiles[i];
-      const s = new Setting(containerEl)
+      new Setting(containerEl)
         .setName(profile.name)
         .setDesc(profile.shellPath)
+        .addButton((btn) =>
+          btn.setButtonText("Edit").onClick(() => {
+            new EditProfileModal(this.app, profile, async (updated) => {
+              this.plugin.settings.customProfiles[i] = updated;
+              await this.plugin.saveSettings();
+              this.display();
+            }).open();
+          })
+        )
         .addButton((btn) =>
           btn
             .setButtonText("Remove")
@@ -196,16 +267,19 @@ export class TerminalSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).addButton((btn) =>
       btn.setButtonText("Add profile").onClick(async () => {
-        this.plugin.settings.customProfiles.push({
+        const newProfile = {
           id: `custom-${Date.now()}`,
-          name: "Custom Shell",
+          name: "New Shell",
           shellPath: "/bin/sh",
           args: [],
           env: {},
           icon: "terminal",
-        });
-        await this.plugin.saveSettings();
-        this.display();
+        };
+        new EditProfileModal(this.app, newProfile, async (created) => {
+          this.plugin.settings.customProfiles.push(created);
+          await this.plugin.saveSettings();
+          this.display();
+        }).open();
       })
     );
   }

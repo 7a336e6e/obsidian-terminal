@@ -1,6 +1,6 @@
 import { ITheme } from "@xterm/xterm";
 import { TerminalInstance } from "./TerminalInstance";
-import { TerminalProfile, PluginSettings, TerminalTab } from "./types";
+import { TerminalProfile, PluginSettings, TerminalTab, SavedState } from "./types";
 import { getProfile } from "./ShellProfile";
 import { getTheme } from "./ThemeManager";
 
@@ -12,9 +12,9 @@ function nextId(): string {
 
 export class TerminalManager {
   private instances: Map<string, TerminalInstance> = new Map();
+  private order: string[] = []; // explicit tab order for drag-reorder
   private _activeId: string | null = null;
 
-  /** Callbacks */
   onTabsChanged: (() => void) | null = null;
   onActiveChanged: ((id: string | null) => void) | null = null;
 
@@ -28,16 +28,17 @@ export class TerminalManager {
   }
 
   get tabs(): TerminalTab[] {
-    const result: TerminalTab[] = [];
-    for (const [id, inst] of this.instances) {
-      result.push({
-        id,
-        title: inst.title,
-        profileId: inst["profile"].id,
-        cwd: inst["cwd"],
+    return this.order
+      .filter((id) => this.instances.has(id))
+      .map((id) => {
+        const inst = this.instances.get(id)!;
+        return {
+          id,
+          title: inst.title,
+          profileId: inst.profileId,
+          cwd: inst.cwd,
+        };
       });
-    }
-    return result;
   }
 
   get count(): number {
@@ -53,9 +54,6 @@ export class TerminalManager {
     return this.instances.get(id) || null;
   }
 
-  /**
-   * Create a new terminal instance.
-   */
   createTerminal(
     profileId?: string,
     cwd?: string,
@@ -80,17 +78,16 @@ export class TerminalManager {
       theme
     );
 
-    // When the title changes, notify the view to update tabs
     instance.onTitleChange = () => {
       this.onTabsChanged?.();
     };
 
-    // When the process exits, update the title
     instance.onExit = () => {
       this.onTabsChanged?.();
     };
 
     this.instances.set(id, instance);
+    this.order.push(id);
     this._activeId = id;
 
     this.onTabsChanged?.();
@@ -99,19 +96,16 @@ export class TerminalManager {
     return id;
   }
 
-  /**
-   * Close and dispose a terminal by ID.
-   */
   closeTerminal(id: string): void {
     const instance = this.instances.get(id);
     if (!instance) return;
 
     instance.dispose();
     this.instances.delete(id);
+    this.order = this.order.filter((oid) => oid !== id);
 
-    // If the closed terminal was active, switch to another
     if (this._activeId === id) {
-      const remaining = Array.from(this.instances.keys());
+      const remaining = this.order;
       this._activeId = remaining.length > 0 ? remaining[remaining.length - 1] : null;
       this.onActiveChanged?.(this._activeId);
     }
@@ -119,66 +113,85 @@ export class TerminalManager {
     this.onTabsChanged?.();
   }
 
-  /**
-   * Switch to a terminal tab.
-   */
   setActive(id: string): void {
     if (!this.instances.has(id)) return;
     this._activeId = id;
     this.onActiveChanged?.(id);
   }
 
-  /**
-   * Switch to next/previous terminal tab.
-   */
   cycleTab(direction: 1 | -1): void {
-    const ids = Array.from(this.instances.keys());
-    if (ids.length <= 1) return;
-    const currentIdx = ids.indexOf(this._activeId || "");
-    const nextIdx = (currentIdx + direction + ids.length) % ids.length;
-    this.setActive(ids[nextIdx]);
+    if (this.order.length <= 1) return;
+    const currentIdx = this.order.indexOf(this._activeId || "");
+    const nextIdx = (currentIdx + direction + this.order.length) % this.order.length;
+    this.setActive(this.order[nextIdx]);
   }
 
-  /**
-   * Apply theme to all terminals.
-   */
+  /** Move a tab to a new position (drag-reorder). */
+  reorderTab(fromId: string, toId: string): void {
+    if (fromId === toId) return;
+    const fromIdx = this.order.indexOf(fromId);
+    const toIdx = this.order.indexOf(toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    this.order.splice(fromIdx, 1);
+    this.order.splice(toIdx, 0, fromId);
+    this.onTabsChanged?.();
+  }
+
   applyTheme(theme: ITheme): void {
     for (const inst of this.instances.values()) {
       inst.setTheme(theme);
     }
   }
 
-  /**
-   * Update font settings on all terminals.
-   */
   applyFont(family: string, size: number): void {
     for (const inst of this.instances.values()) {
       inst.updateFont(family, size);
     }
   }
 
-  /**
-   * Send cd to active terminal.
-   */
+  /** Send cd to active terminal. Sends Ctrl-U first to avoid clobbering input. */
   cdActive(dir: string): void {
     this.getActiveInstance()?.cd(dir);
   }
 
-  /**
-   * Update settings reference (called when settings change).
-   */
   updateSettings(settings: PluginSettings): void {
     this.settings = settings;
   }
 
-  /**
-   * Dispose all terminals and clean up.
-   */
+  /** Serialize current tab state for session persistence. */
+  serialize(): SavedState {
+    return {
+      tabs: this.tabs,
+      activeTabId: this._activeId,
+    };
+  }
+
+  /** Restore tabs from a saved state — creates fresh shell processes. */
+  restore(state: SavedState): void {
+    for (const tab of state.tabs) {
+      const id = this.createTerminal(tab.profileId, tab.cwd);
+      // createTerminal assigns a new id; patch the title
+      const instance = this.instances.get(id);
+      if (instance && tab.title !== instance.title) {
+        instance.setTitle(tab.title);
+      }
+    }
+    // Activate the previously-active tab (by position, not by old id)
+    if (state.activeTabId !== null && this.order.length > 0) {
+      const oldTabs = state.tabs;
+      const oldActiveIdx = oldTabs.findIndex((t) => t.id === state.activeTabId);
+      if (oldActiveIdx >= 0 && oldActiveIdx < this.order.length) {
+        this.setActive(this.order[oldActiveIdx]);
+      }
+    }
+  }
+
   disposeAll(): void {
     for (const inst of this.instances.values()) {
       inst.dispose();
     }
     this.instances.clear();
+    this.order = [];
     this._activeId = null;
   }
 

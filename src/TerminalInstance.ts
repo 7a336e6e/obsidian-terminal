@@ -2,9 +2,11 @@ import { Terminal, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess } from "child_process";
 import { TerminalProfile, PluginSettings } from "./types";
+import { PtyBackend, PosixPythonPtyBackend } from "./PtyBackend";
 import xtermCss from "@xterm/xterm/css/xterm.css";
+import * as path from "path";
 
 let cssInjected = false;
 
@@ -17,126 +19,6 @@ function injectXtermCss() {
   cssInjected = true;
 }
 
-// Resize escape protocol (DCS-based):
-//   Send:  ESC P r e s z <rows>;<cols> ESC \
-// The Python PTY helper intercepts these before forwarding to the shell.
-const RESIZE_PREFIX = "\x1bPresz";
-const RESIZE_SUFFIX = "\x1b\\";
-
-// Python PTY helper script.
-// Creates a real pseudo-terminal so the shell gets full TTY support
-// (colors, line editing, job control) without requiring native modules (node-pty).
-// Resize commands are passed in-band via the DCS escape sequence above.
-const PTY_HELPER = `
-import pty, os, sys, select, signal, struct, fcntl, termios, errno
-
-ESC = bytes([27])
-RESIZE_START = ESC + b'Presz'
-RESIZE_END = ESC + bytes([92])
-
-def set_size(fd, rows, cols):
-    s = struct.pack('HHHH', rows, cols, 0, 0)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, s)
-
-def main():
-    shell = sys.argv[1:] or [os.environ.get('SHELL', '/bin/zsh')]
-    master_fd, slave_fd = pty.openpty()
-
-    rows = int(os.environ.get('LINES', '24'))
-    cols = int(os.environ.get('COLUMNS', '80'))
-    set_size(master_fd, rows, cols)
-
-    pid = os.fork()
-    if pid == 0:
-        os.close(master_fd)
-        os.setsid()
-        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-        os.dup2(slave_fd, 0)
-        os.dup2(slave_fd, 1)
-        os.dup2(slave_fd, 2)
-        if slave_fd > 2:
-            os.close(slave_fd)
-        os.execvp(shell[0], shell)
-        sys.exit(1)
-
-    os.close(slave_fd)
-
-    def cleanup():
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-        try:
-            os.kill(pid, signal.SIGHUP)
-        except OSError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except (OSError, ChildProcessError):
-            pass
-
-    def on_sigterm(sig, frame):
-        cleanup()
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, on_sigterm)
-
-    buf = b''
-    try:
-        while True:
-            try:
-                rlist, _, _ = select.select([master_fd, 0], [], [], 0.5)
-            except (select.error, InterruptedError, ValueError):
-                continue
-
-            if 0 in rlist:
-                try:
-                    data = os.read(0, 16384)
-                except OSError as e:
-                    if e.errno == errno.EIO:
-                        break
-                    raise
-                if not data:
-                    break
-
-                buf += data
-                while RESIZE_START in buf:
-                    pre, _, rest = buf.partition(RESIZE_START)
-                    if RESIZE_END in rest:
-                        payload, _, rest = rest.partition(RESIZE_END)
-                        if pre:
-                            os.write(master_fd, pre)
-                        try:
-                            r, c = payload.decode().split(';')
-                            set_size(master_fd, int(r), int(c))
-                            os.kill(pid, signal.SIGWINCH)
-                        except (ValueError, OSError):
-                            pass
-                        buf = rest
-                    else:
-                        break
-                if buf and RESIZE_START not in buf:
-                    os.write(master_fd, buf)
-                    buf = b''
-
-            if master_fd in rlist:
-                try:
-                    data = os.read(master_fd, 16384)
-                except OSError as e:
-                    if e.errno == errno.EIO:
-                        break
-                    raise
-                if not data:
-                    break
-                os.write(1, data)
-    except (IOError, OSError):
-        pass
-    finally:
-        cleanup()
-
-main()
-`;
-
 export class TerminalInstance {
   readonly id: string;
   readonly terminal: Terminal;
@@ -147,25 +29,47 @@ export class TerminalInstance {
   private containerEl: HTMLElement | null = null;
   private disposed = false;
   private resizeObserver: ResizeObserver | null = null;
-
-  onTitleChange: ((title: string) => void) | null = null;
-  onExit: ((code: number | null) => void) | null = null;
+  private backend: PtyBackend;
 
   private _title: string;
+  private _cwd: string;
+  private _profileId: string;
+  private _isRunning = false;
+
+  // Callbacks wired up by TerminalManager / TerminalView
+  onTitleChange: ((title: string) => void) | null = null;
+  onExit: ((code: number | null) => void) | null = null;
+  onSearchToggle: (() => void) | null = null;
 
   get title(): string {
     return this._title;
   }
 
+  get cwd(): string {
+    return this._cwd;
+  }
+
+  get profileId(): string {
+    return this._profileId;
+  }
+
+  get isRunning(): boolean {
+    return this._isRunning;
+  }
+
   constructor(
     id: string,
     private profile: TerminalProfile,
-    private cwd: string,
+    cwd: string,
     private settings: PluginSettings,
-    theme: ITheme
+    theme: ITheme,
+    backend?: PtyBackend
   ) {
     this.id = id;
     this._title = profile.name;
+    this._cwd = cwd;
+    this._profileId = profile.id;
+    this.backend = backend ?? new PosixPythonPtyBackend();
 
     injectXtermCss();
 
@@ -186,10 +90,47 @@ export class TerminalInstance {
     this.terminal.loadAddon(new WebLinksAddon());
     this.terminal.loadAddon(this.searchAddon);
 
-    // Track title changes from shell escape sequences
     this.terminal.onTitleChange((t) => {
       this._title = t;
       this.onTitleChange?.(t);
+    });
+
+    // OSC 7 — shell-emitted CWD notification (requires shell config, e.g. chpwd in zsh)
+    this.terminal.parser.registerOscHandler(7, (data) => {
+      try {
+        // data is like "file://hostname/abs/path"
+        const url = new URL(data);
+        const decoded = decodeURIComponent(url.pathname);
+        if (decoded) {
+          this._cwd = decoded;
+          // Update title to folder basename unless the user manually renamed it
+          const base = path.basename(decoded);
+          if (base) {
+            this._title = base;
+            this.onTitleChange?.(this._title);
+          }
+        }
+      } catch {
+        // ignore malformed OSC 7
+      }
+      return true;
+    });
+
+    // Copy-on-select
+    this.terminal.onSelectionChange(() => {
+      if (!this.settings.copyOnSelect) return;
+      const sel = this.terminal.getSelection();
+      if (sel) navigator.clipboard.writeText(sel).catch(() => {/* ignore */});
+    });
+
+    // Intercept Mod+F to toggle search overlay
+    this.terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.type !== "keydown") return true;
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        this.onSearchToggle?.();
+        return false;
+      }
+      return true;
     });
   }
 
@@ -197,16 +138,24 @@ export class TerminalInstance {
    * Attach the terminal to a DOM element and spawn the shell process.
    */
   attach(container: HTMLElement): void {
+    if (process.platform === "win32") {
+      this.containerEl = container;
+      this.terminal.open(container);
+      this.terminal.write(
+        "\r\n\x1b[31m[Windows is not yet supported. See CLAUDE.md for details.]\x1b[0m\r\n"
+      );
+      return;
+    }
+
     this.containerEl = container;
     this.terminal.open(container);
+    this._isRunning = true;
 
-    // Initial fit
     requestAnimationFrame(() => {
       this.fit();
       this.spawnShell();
     });
 
-    // Auto-resize when container dimensions change
     this.resizeObserver = new ResizeObserver(() => {
       this.fit();
     });
@@ -215,7 +164,6 @@ export class TerminalInstance {
 
   /**
    * Detach the terminal from its container without killing the process.
-   * Used when switching tabs (hide).
    */
   detach(): void {
     this.resizeObserver?.disconnect();
@@ -229,7 +177,6 @@ export class TerminalInstance {
   reattach(container: HTMLElement): void {
     this.containerEl = container;
 
-    // xterm.js open() can only be called once. Instead, move the DOM node.
     if (this.terminal.element) {
       container.appendChild(this.terminal.element);
     } else {
@@ -253,30 +200,44 @@ export class TerminalInstance {
     }
   }
 
-  /** Apply a new theme live. */
   setTheme(theme: ITheme): void {
     this.terminal.options.theme = theme;
   }
 
-  /** Update font settings live. */
   updateFont(family: string, size: number): void {
     this.terminal.options.fontFamily = family;
     this.terminal.options.fontSize = size;
     this.fit();
   }
 
-  /** Send a cd command to this shell. */
+  setTitle(title: string): void {
+    this._title = title;
+    this.onTitleChange?.(title);
+  }
+
+  clear(): void {
+    this.terminal.clear();
+  }
+
+  /** Send a cd command to this shell. Sends Ctrl-U first to clear any pending input. */
   cd(dir: string): void {
     if (this.process && !this.process.killed) {
       const escaped = dir.replace(/'/g, "'\\''");
-      this.process.stdin?.write(`cd '${escaped}'\n`);
+      // \x15 = Ctrl-U: clears the current input line before cd
+      this.process.stdin?.write(`\x15cd '${escaped}'\n`);
     }
   }
 
-  /** Send a resize command to the PTY helper via the in-band escape protocol. */
+  /** Write raw data to the shell stdin — used by send-selection-to-terminal. */
+  write(data: string): void {
+    if (this.process && !this.process.killed) {
+      this.process.stdin?.write(data);
+    }
+  }
+
   private sendResize(rows: number, cols: number): void {
     if (this.process && !this.process.killed && this.process.stdin?.writable) {
-      this.process.stdin.write(`${RESIZE_PREFIX}${rows};${cols}${RESIZE_SUFFIX}`);
+      this.process.stdin.write(this.backend.encodeResize(rows, cols));
     }
   }
 
@@ -284,35 +245,27 @@ export class TerminalInstance {
     const { shellPath, args, env: profileEnv } = this.profile;
     const shellArgs = [...args];
 
-    // Use login shell if configured and no args override it
     if (this.settings.shellLoginMode && shellArgs.length === 0) {
       shellArgs.push("-l");
     }
 
     const env: Record<string, string> = {
-      ...process.env,
+      ...(process.env as Record<string, string>),
       ...profileEnv,
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
       OBSIDIAN_TERMINAL: "1",
-      COLUMNS: String(this.terminal.cols),
-      LINES: String(this.terminal.rows),
     };
 
-    // Use Python PTY helper for proper pseudo-terminal support.
-    // This gives the shell a real TTY (colors, line editing, job control)
-    // without requiring native modules like node-pty.
-    this.process = spawn(
-      "python3",
-      ["-c", PTY_HELPER, shellPath, ...shellArgs],
-      {
-        cwd: this.cwd,
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
+    this.process = this.backend.spawn({
+      shell: shellPath,
+      args: shellArgs,
+      cwd: this._cwd,
+      env,
+      cols: this.terminal.cols,
+      rows: this.terminal.rows,
+    });
 
-    // Shell output → xterm
     this.process.stdout?.on("data", (data: Buffer) => {
       if (!this.disposed) {
         this.terminal.write(new Uint8Array(data));
@@ -325,14 +278,12 @@ export class TerminalInstance {
       }
     });
 
-    // User input → shell stdin (via Python PTY helper)
     this.terminal.onData((data: string) => {
       if (this.process && !this.process.killed) {
         this.process.stdin?.write(data);
       }
     });
 
-    // Handle binary input (e.g., Ctrl+C sends \x03)
     this.terminal.onBinary((data: string) => {
       if (this.process && !this.process.killed) {
         const buf = Buffer.from(data, "binary");
@@ -340,17 +291,29 @@ export class TerminalInstance {
       }
     });
 
-    // Process exit
     this.process.on("exit", (code) => {
+      this._isRunning = false;
       if (!this.disposed) {
         this.terminal.write(
           `\r\n\x1b[90m[Process exited with code ${code ?? "unknown"}]\x1b[0m\r\n`
         );
+        if (this.settings.reuseTabOnExit) {
+          this.terminal.write("\x1b[90m[Press Enter to start a new session]\x1b[0m\r\n");
+          // Listen for Enter key to restart the shell
+          const disposable = this.terminal.onData((data) => {
+            if (data === "\r" || data === "\n") {
+              disposable.dispose();
+              this._isRunning = true;
+              this.spawnShell();
+            }
+          });
+        }
         this.onExit?.(code);
       }
     });
 
     this.process.on("error", (err) => {
+      this._isRunning = false;
       if (!this.disposed) {
         this.terminal.write(
           `\r\n\x1b[31m[Error: ${err.message}]\x1b[0m\r\n`
@@ -359,26 +322,21 @@ export class TerminalInstance {
     });
   }
 
-  /**
-   * Dispose the terminal instance — kills the process and cleans up.
-   */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this._isRunning = false;
 
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
 
     if (this.process && !this.process.killed) {
-      // Close stdin first — triggers clean exit in the Python helper,
-      // which sends SIGHUP to the shell child.
       try {
         this.process.stdin?.end();
       } catch {
         // ignore
       }
 
-      // Fallback: force kill after a short grace period
       const proc = this.process;
       setTimeout(() => {
         if (!proc.killed) {
