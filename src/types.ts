@@ -38,6 +38,8 @@ export interface PluginSettings {
   copyOnSelect: boolean;
   pasteSanitize: boolean;
   reuseTabOnExit: boolean;
+  ideIntegration: boolean;
+  contextBridge: boolean;
   __session?: SavedState;
 }
 
@@ -59,6 +61,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   copyOnSelect: false,
   pasteSanitize: true,
   reuseTabOnExit: false,
+  ideIntegration: false,
+  contextBridge: false,
 };
 
 export interface TerminalTab {

@@ -35,7 +35,12 @@ src/
 ├── settings.ts          — PluginSettingTab UI
 ├── modals.ts            — RenameModal, ConfirmCloseModal, EditProfileModal
 ├── types.ts             — Shared types, constants, DEFAULT_SETTINGS
-└── xterm-css.d.ts       — Type declaration for the inlined xterm CSS string import
+├── xterm-css.d.ts       — Type declaration for the inlined xterm CSS string import
+└── ide/                 — Editor integration (active note + selection → terminal)
+    ├── ContextProvider.ts — Single source of editor truth (activeEditor + CM6 listener)
+    ├── IdeServer.ts       — Claude Code IDE integration: WS/MCP server + lock file
+    ├── WsServer.ts        — Hand-rolled minimal RFC 6455 WebSocket server (no deps)
+    └── ContextBridge.ts   — Generic bridge: env vars + live ~/.obsidian-term/context.json
 ```
 
 ## Key invariants and gotchas
@@ -47,6 +52,8 @@ src/
 - **`vault.adapter.basePath` is not in Obsidian's public types.** `getVaultBasePath()` in `main.ts` uses `FileSystemAdapter` with a narrow `@ts-expect-error` — keep it isolated there.
 - **`cdActive` sends `\x15` (Ctrl-U) before the `cd` command** to clear whatever the user is currently typing. This is intentional — do not remove it.
 - **Session persistence** stores only tab metadata (title, profileId, cwd) not scrollback. Shell processes are always fresh on restore.
+- **Editor integration is opt-in and off by default** (`ideIntegration`, `contextBridge` settings). The IDE server (`src/ide/IdeServer.ts`) binds **127.0.0.1 only**, requires the `x-claude-code-ide-authorization` token written into `~/.claude/ide/<port>.lock`, and deletes that lock file on stop/unload. It speaks the Claude Code WS-transport MCP protocol — do not "fix" it to plain HTTP/SSE.
+- **Integration env is injected at spawn, per-terminal.** `getInjectedTerminalEnv()` in `main.ts` is threaded down through `TerminalView → TerminalManager → TerminalInstance` and merged in `spawnShell()`. Toggling the feature only affects terminals opened *after* the change — existing shells keep their spawn-time env (same as VS Code). `ContextProvider` is the only place that touches Obsidian editor APIs; both `IdeServer` and `ContextBridge` subscribe to it.
 
 ## Conventions
 

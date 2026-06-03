@@ -232,6 +232,50 @@ export class TerminalSettingTab extends PluginSettingTab {
           })
       );
 
+    // ---- Editor integration ----
+    containerEl.createEl("h2", { text: "Editor integration" });
+
+    new Setting(containerEl)
+      .setName("Claude Code IDE integration")
+      .setDesc(
+        "Run claude in a terminal and it automatically knows your active note and selection. Opens a localhost-only server. Open a new terminal tab after enabling."
+      )
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.ideIntegration)
+          .onChange(async (val) => {
+            this.plugin.settings.ideIntegration = val;
+            await this.plugin.saveSettings();
+            await this.plugin.applyIntegrationSettings();
+            this.display();
+          })
+      );
+
+    if (this.plugin.settings.ideIntegration) {
+      const status = this.plugin.getIdeStatus();
+      new Setting(containerEl)
+        .setName("Server status")
+        .setDesc(
+          status.running ? `Running on 127.0.0.1:${status.port}` : "Stopped"
+        );
+    }
+
+    new Setting(containerEl)
+      .setName("Context bridge (any CLI)")
+      .setDesc(
+        "Expose the active note and selection to any command via $OBSIDIAN_ACTIVE_FILE, $OBSIDIAN_SELECTION, and a live ~/.obsidian-term/context.json file."
+      )
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.contextBridge)
+          .onChange(async (val) => {
+            this.plugin.settings.contextBridge = val;
+            await this.plugin.saveSettings();
+            await this.plugin.applyIntegrationSettings();
+            this.display();
+          })
+      );
+
     // ---- Custom profiles ----
     containerEl.createEl("h2", { text: "Custom Shell Profiles" });
     containerEl.createEl("p", {

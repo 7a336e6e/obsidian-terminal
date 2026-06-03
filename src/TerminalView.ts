@@ -28,12 +28,13 @@ export class TerminalView extends ItemView {
   constructor(
     leaf: WorkspaceLeaf,
     settings: PluginSettings,
-    vaultPath: string
+    vaultPath: string,
+    getInjectedEnv?: () => Record<string, string>
   ) {
     super(leaf);
     this.settings = settings;
     this.vaultPath = vaultPath;
-    this.manager = new TerminalManager(settings, vaultPath);
+    this.manager = new TerminalManager(settings, vaultPath, getInjectedEnv);
   }
 
   getViewType(): string {

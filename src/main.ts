@@ -14,18 +14,40 @@ import {
 } from "./types";
 import { TerminalView } from "./TerminalView";
 import { TerminalSettingTab } from "./settings";
+import { ContextProvider } from "./ide/ContextProvider";
+import { IdeServer } from "./ide/IdeServer";
+import { ContextBridge } from "./ide/ContextBridge";
 import * as path from "path";
 import { spawnSync } from "child_process";
 
 export default class ObsidianTerminalPlugin extends Plugin {
   settings: PluginSettings;
   private statusBarEl: HTMLElement | null = null;
+  private contextProvider!: ContextProvider;
+  private ideServer!: IdeServer;
+  private contextBridge!: ContextBridge;
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    const vaultBasePath = this.getVaultBasePath();
+    this.contextProvider = new ContextProvider(this.app, this, vaultBasePath);
+    this.contextProvider.register();
+    this.ideServer = new IdeServer(
+      this.contextProvider,
+      vaultBasePath,
+      this.manifest.version
+    );
+    this.contextBridge = new ContextBridge(this.contextProvider, vaultBasePath);
+    await this.applyIntegrationSettings();
+
     this.registerView(VIEW_TYPE_TERMINAL, (leaf) => {
-      return new TerminalView(leaf, this.settings, this.getVaultBasePath());
+      return new TerminalView(
+        leaf,
+        this.settings,
+        this.getVaultBasePath(),
+        () => this.getInjectedTerminalEnv()
+      );
     });
 
     this.addRibbonIcon("terminal", "Open terminal", () => {
@@ -148,6 +170,9 @@ export default class ObsidianTerminalPlugin extends Plugin {
       view.serializeSession();
       await this.saveSettings();
     }
+    await this.ideServer?.stop();
+    this.contextBridge?.stop();
+    this.contextProvider?.dispose();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TERMINAL);
   }
 
@@ -286,6 +311,49 @@ export default class ObsidianTerminalPlugin extends Plugin {
       return adapter.getBasePath();
     }
     return (adapter as any).basePath || "";
+  }
+
+  // ------ Editor integration ------
+
+  /** Start/stop the IDE server and context bridge to match the current settings. */
+  async applyIntegrationSettings(): Promise<void> {
+    try {
+      if (this.settings.ideIntegration && !this.ideServer.running) {
+        await this.ideServer.start();
+      } else if (!this.settings.ideIntegration && this.ideServer.running) {
+        await this.ideServer.stop();
+      }
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      new Notice(`ObsidianTerm: could not start IDE integration. ${detail}`, 8000);
+    }
+
+    if (this.settings.contextBridge) {
+      this.contextBridge.start();
+    } else {
+      this.contextBridge.stop();
+    }
+  }
+
+  /** Current IDE server status, for the settings panel. */
+  getIdeStatus(): { running: boolean; port: number } {
+    return {
+      running: this.ideServer?.running ?? false,
+      port: this.ideServer?.port ?? 0,
+    };
+  }
+
+  /** Env vars merged into each new shell at spawn time. */
+  private getInjectedTerminalEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    if (this.settings.ideIntegration && this.ideServer?.running) {
+      env.CLAUDE_CODE_SSE_PORT = String(this.ideServer.port);
+      env.ENABLE_IDE_INTEGRATION = "true";
+    }
+    if (this.settings.contextBridge && this.contextBridge) {
+      Object.assign(env, this.contextBridge.getSpawnEnv());
+    }
+    return env;
   }
 
   private resolveFileFolderPath(file: TFile): string | null {

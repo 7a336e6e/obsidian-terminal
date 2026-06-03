@@ -20,7 +20,8 @@ export class TerminalManager {
 
   constructor(
     private settings: PluginSettings,
-    private vaultPath: string
+    private vaultPath: string,
+    private getInjectedEnv?: () => Record<string, string>
   ) {}
 
   get activeId(): string | null {
@@ -75,7 +76,9 @@ export class TerminalManager {
       profile,
       resolvedCwd,
       this.settings,
-      theme
+      theme,
+      undefined,
+      this.getInjectedEnv
     );
 
     instance.onTitleChange = () => {

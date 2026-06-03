@@ -18,6 +18,7 @@ Built with [xterm.js](https://xtermjs.org/) and a lightweight Python PTY bridge.
 - **Resize handling** — terminal auto-resizes with the panel
 - **Clickable links** — URLs in terminal output are clickable
 - **Search** — search terminal output with `Cmd+F`
+- **Editor integration** — let `claude` (and other CLIs) automatically see your active note and current selection, like VS Code's IDE integration
 - **Login shell** — optionally start shells with the `-l` flag to load your `.zprofile`/`.bash_profile`
 - **Configurable** — font family, font size, cursor style, scrollback buffer, and more
 
@@ -94,6 +95,28 @@ npm run build && \
 - **Right-click a tab** to rename, close, or close other tabs
 - Click the **×** on a tab to close it
 
+### Editor integration (let the terminal see your notes)
+
+Off by default. Enable under **Settings → Terminal → Editor integration**. Two independent switches:
+
+**Claude Code IDE integration** — the plugin hosts the same kind of localhost server VS Code
+uses for its Claude Code integration. Turn it on, then **open a new terminal tab** and run
+`claude`. It auto-connects, so the chat already knows which note you're viewing and what text
+you've selected — and updates live as you click around. Verify the connection with `/status`
+inside Claude.
+
+**Context bridge (any CLI)** — exposes the same context to *any* program, not just Claude:
+
+- `$OBSIDIAN_ACTIVE_FILE` — absolute path of the active note (set when the terminal is opened)
+- `$OBSIDIAN_SELECTION` — the selected text at spawn time
+- `$OBSIDIAN_TERM_CONTEXT_FILE` — path to a JSON file that is updated **live** with the active
+  note + selection. `cat "$OBSIDIAN_TERM_CONTEXT_FILE"` any time to read the current context.
+- `$OBSIDIAN_VAULT_PATH` — the vault root
+
+> **Note:** env vars are captured when a terminal is created, so open a fresh tab after enabling.
+> **Security:** the IDE server binds to `127.0.0.1` only and requires an auth token stored in
+> `~/.claude/ide/<port>.lock`; the lock file is removed when you disable the feature or close Obsidian.
+
 ## Configuration
 
 Open **Settings → Terminal** to configure:
@@ -118,6 +141,10 @@ Open **Settings → Terminal** to configure:
 ### Custom Shell Profiles
 Add custom profiles with a name, shell path, arguments, and environment variables.
 
+### Editor integration
+- **Claude Code IDE integration** — host a localhost WS/MCP server so `claude` in a terminal knows your active note and selection
+- **Context bridge** — expose the active note and selection to any CLI via env vars and a live `~/.obsidian-term/context.json`
+
 ## Architecture
 
 ```
@@ -130,7 +157,12 @@ src/
 ├── ShellProfile.ts      # Built-in and custom shell profile definitions
 ├── settings.ts          # Plugin settings UI (PluginSettingTab)
 ├── types.ts             # Shared interfaces, constants, defaults
-└── xterm-css.d.ts       # Type declaration for CSS string import
+├── xterm-css.d.ts       # Type declaration for CSS string import
+└── ide/                 # Editor integration (active note + selection → terminal)
+    ├── ContextProvider.ts # Single source of editor truth
+    ├── IdeServer.ts       # Claude Code IDE integration (WS/MCP server + lock file)
+    ├── WsServer.ts        # Minimal RFC 6455 WebSocket server (no dependencies)
+    └── ContextBridge.ts   # Generic env vars + live context.json
 ```
 
 ### How it works
@@ -178,6 +210,12 @@ The build uses [esbuild](https://esbuild.github.io/) with a custom plugin that i
 ### Shell doesn't load my aliases / PATH
 - Enable **Login shell** in settings (adds the `-l` flag)
 - This makes the shell read your `.zprofile`, `.bash_profile`, etc.
+
+### `claude` doesn't see my active note / selection
+- Enable **Claude Code IDE integration** in Settings → Terminal → Editor integration
+- **Open a new terminal tab** after enabling — the connection env vars are set when the tab is created, not retroactively
+- Run `claude` in that fresh tab; check `/status` inside Claude to confirm the IDE shows as connected
+- Confirm the lock file exists: `cat ~/.claude/ide/*.lock`
 
 ## License
 

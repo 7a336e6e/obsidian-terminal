@@ -63,7 +63,8 @@ export class TerminalInstance {
     cwd: string,
     private settings: PluginSettings,
     theme: ITheme,
-    backend?: PtyBackend
+    backend?: PtyBackend,
+    private getInjectedEnv?: () => Record<string, string>
   ) {
     this.id = id;
     this._title = profile.name;
@@ -255,6 +256,9 @@ export class TerminalInstance {
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
       OBSIDIAN_TERMINAL: "1",
+      // Editor-integration vars (IDE port, context file, active note, …).
+      // Resolved per-spawn so toggling the feature affects new terminals.
+      ...(this.getInjectedEnv?.() ?? {}),
     };
 
     this.process = this.backend.spawn({
