@@ -87,13 +87,40 @@ npm run build && \
 | `Next terminal tab` | Switch to next tab |
 | `Previous terminal tab` | Switch to previous tab |
 | `Open terminal in current note's folder` | New tab with CWD set to the active note's directory |
+| `Split terminal right` | Split the focused pane, new terminal beside it |
+| `Split terminal down` | Split the focused pane, new terminal below it |
+| `Focus next terminal pane` | Move focus to the next pane in the current tab |
+| `Focus previous terminal pane` | Move focus to the previous pane in the current tab |
 
 ### Tab management
 
-- Click **+** to create a new terminal tab
-- **Right-click +** to choose a shell profile
-- **Right-click a tab** to rename, close, or close other tabs
-- Click the **×** on a tab to close it
+The panel has a single VS Code-style header: the **Terminal** title, your terminal tabs, and actions on the right.
+
+- Click **+** to create a new terminal tab; click **⌄** (or right-click **+**) to choose a shell profile
+- Click the **trash** icon to kill the focused terminal
+- Click **⋯** to rename, clear or search the focused terminal, close the other tabs, or close the panel
+- **Right-click a tab** to rename, split, close, or close other tabs
+- Click the **×** on a tab to close it, with every pane in it
+
+### Split panes
+
+Like VS Code, a tab can hold several terminals side by side or stacked, and splits can nest (split right, then split
+one side down). A new pane starts with the same shell profile and working directory as the one it was split from.
+A tab's label lists its panes' titles.
+
+- Click the **split right** or **split down** icon in the header, or right-click inside a terminal
+- Click a pane to focus it; the focused pane has a thin accent outline
+- Drag the line between panes to resize them; double-click it to make them equal
+- The trash icon (or **Close pane** in the right-click menu) closes just the focused pane
+- Layouts and pane sizes are saved with the session and restored with **Restore tabs on startup**
+
+Keyboard (macOS, while the terminal has focus): **⌘\\** splits right, **⌘⇧\\** splits down, **⌥⌘ + arrow keys**
+move focus to the pane in that direction. ⌘ combinations never reach the shell, so nothing is taken away from
+programs running in it. On other platforms, assign hotkeys to the split and focus commands in Settings → Hotkeys.
+
+With **Compact header** on (the default), Obsidian's own tab and navigation bar above the terminal are hidden while it
+has a pane of its own. Turn it off in **Settings → Terminal → Appearance** to get them back, for example to drag the
+panel somewhere else.
 
 ### Editor integration (let the terminal see your notes)
 
@@ -137,6 +164,7 @@ Open **Settings → Terminal** to configure:
 - **Cursor style** — block, underline, or bar
 - **Cursor blink** — on/off
 - **Scrollback** — 100–100,000 lines (default: 5,000)
+- **Compact header** — one header row; hides Obsidian's tab and navigation bar above the terminal (default: on)
 
 ### Custom Shell Profiles
 Add custom profiles with a name, shell path, arguments, and environment variables.
@@ -150,7 +178,7 @@ Add custom profiles with a name, shell path, arguments, and environment variable
 ```
 src/
 ├── main.ts              # Plugin entry point — lifecycle, commands, event listeners
-├── TerminalView.ts      # Obsidian ItemView — tab bar UI, container management
+├── TerminalView.ts      # Obsidian ItemView — tab bar UI, split-pane layout, container management
 ├── TerminalManager.ts   # Manages multiple TerminalInstance objects
 ├── TerminalInstance.ts   # xterm.js ↔ Python PTY bridge
 ├── ThemeManager.ts      # Theme definitions + Obsidian CSS variable sync

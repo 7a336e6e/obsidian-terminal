@@ -3,10 +3,19 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { ChildProcess } from "child_process";
-import { TerminalProfile, PluginSettings } from "./types";
+import { TerminalProfile, PluginSettings, SplitDirection } from "./types";
 import { PtyBackend, PosixPythonPtyBackend } from "./PtyBackend";
 import xtermCss from "@xterm/xterm/css/xterm.css";
 import * as path from "path";
+
+export type PaneDirection = "left" | "right" | "up" | "down";
+
+const ARROW_DIRECTIONS: Record<string, PaneDirection> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
 
 let cssInjected = false;
 
@@ -40,6 +49,8 @@ export class TerminalInstance {
   onTitleChange: ((title: string) => void) | null = null;
   onExit: ((code: number | null) => void) | null = null;
   onSearchToggle: (() => void) | null = null;
+  onSplitRequest: ((direction: SplitDirection) => void) | null = null;
+  onFocusPaneRequest: ((direction: PaneDirection) => void) | null = null;
 
   get title(): string {
     return this._title;
@@ -130,6 +141,25 @@ export class TerminalInstance {
       if ((e.metaKey || e.ctrlKey) && e.key === "f") {
         this.onSearchToggle?.();
         return false;
+      }
+      // VS Code's split shortcuts, macOS only: ⌘ combinations never reach the shell, whereas Ctrl+\ is
+      // SIGQUIT on Linux and must keep working there.
+      if (process.platform === "darwin" && e.metaKey && !e.ctrlKey) {
+        if (e.code === "Backslash" && !e.altKey) {
+          // ⌘\ splits right (VS Code's default), ⌘⇧\ splits down
+          e.preventDefault();
+          e.stopPropagation();
+          this.onSplitRequest?.(e.shiftKey ? "down" : "right");
+          return false;
+        }
+        const direction = ARROW_DIRECTIONS[e.key];
+        if (e.altKey && !e.shiftKey && direction) {
+          // ⌥⌘ + arrow moves focus to the pane in that direction
+          e.preventDefault();
+          e.stopPropagation();
+          this.onFocusPaneRequest?.(direction);
+          return false;
+        }
       }
       return true;
     });

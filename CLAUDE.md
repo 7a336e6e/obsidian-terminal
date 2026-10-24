@@ -26,14 +26,14 @@ There is **no automated test suite** — verification is manual inside Obsidian.
 ```
 src/
 ├── main.ts              — Plugin entry point: lifecycle, commands, event listeners
-├── TerminalView.ts      — Obsidian ItemView: tab bar, search overlay, context menus
-├── TerminalManager.ts   — Owns multiple TerminalInstance objects; handles persistence
-├── TerminalInstance.ts  — xterm.js ↔ PtyBackend bridge; one per terminal tab
+├── TerminalView.ts      — Obsidian ItemView: header/tab bar, split-pane layout, search overlay, context menus
+├── TerminalManager.ts   — Owns TerminalInstance objects and the tabs (groups of split panes); handles persistence
+├── TerminalInstance.ts  — xterm.js ↔ PtyBackend bridge; one per pane
 ├── PtyBackend.ts        — Interface + POSIX Python PTY implementation (Windows seam)
 ├── ThemeManager.ts      — Built-in themes + Obsidian CSS-variable sync
 ├── ShellProfile.ts      — Platform-aware built-in profiles + custom profile helpers
 ├── settings.ts          — PluginSettingTab UI
-├── modals.ts            — RenameModal, ConfirmCloseModal, EditProfileModal
+├── modals.ts            — RenameModal, ConfirmCloseModal, ConfirmModal, EditProfileModal
 ├── types.ts             — Shared types, constants, DEFAULT_SETTINGS
 ├── xterm-css.d.ts       — Type declaration for the inlined xterm CSS string import
 └── ide/                 — Editor integration (active note + selection → terminal)
@@ -46,6 +46,7 @@ src/
 ## Key invariants and gotchas
 
 - **`terminal.open()` is once-only.** xterm.js may only call `open()` once per `Terminal` instance. Tab-switching works by moving the DOM element (`reattach()`), never by re-opening.
+- **Tabs are groups of panes.** Each tab (`TerminalGroup`) holds a `LayoutNode` tree: a pane, or a row/column split with `sizes` that add up to 1. `TerminalManager.tabs` stays a flat list of every instance (for persistence and counts); `groups` is what the tab bar shows. In the view, each instance's container moves between pane cells and a hidden parking element and is never re-created. `syncLayout()` only rebuilds the pane DOM when the active tab or the shape of its layout changes, so focus changes and title updates don't move terminals around.
 - **Resize is in-band.** The terminal sends `ESC P r e s z <rows>;<cols> ESC \` through stdin; the Python helper intercepts it before forwarding to the shell, then calls `ioctl(TIOCSWINSZ)` + `SIGWINCH`. See `PtyBackend.ts` for the constants.
 - **`fit()` is called before the process exists** on the first `requestAnimationFrame`. `sendResize` no-ops safely when the process is null — do not reorder `fit` and `spawnShell` to "fix" this, it is correct.
 - **`injectXtermCss()` is module-scoped.** The `cssInjected` flag lives at module level; the function is idempotent across multiple TerminalInstance creations within one page load.

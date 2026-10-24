@@ -65,6 +65,31 @@ export class ConfirmCloseModal extends Modal {
   }
 }
 
+export class ConfirmModal extends Modal {
+  constructor(
+    app: App,
+    title: string,
+    message: string,
+    confirmText: string,
+    onConfirm: () => void
+  ) {
+    super(app);
+    this.titleEl.setText(title);
+    this.contentEl.createEl("p", { text: message });
+
+    new Setting(this.contentEl)
+      .addButton((btn) =>
+        btn.setButtonText(confirmText).setWarning().onClick(() => {
+          onConfirm();
+          this.close();
+        })
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Cancel").onClick(() => this.close())
+      );
+  }
+}
+
 export class EditProfileModal extends Modal {
   private profile: TerminalProfile;
   private onSubmit: (updated: TerminalProfile) => void;

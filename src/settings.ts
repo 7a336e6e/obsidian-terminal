@@ -169,6 +169,20 @@ export class TerminalSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("Compact header")
+      .setDesc(
+        "One VS Code-style header row. Hides Obsidian's tab and navigation bar above the terminal while it has a pane of its own. Turn off to get them back, for example to drag the panel elsewhere."
+      )
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.compactHeader)
+          .onChange(async (val) => {
+            this.plugin.settings.compactHeader = val;
+            await this.plugin.saveSettings();
+          })
+      );
+
     // ---- Behaviour ----
     containerEl.createEl("h2", { text: "Behaviour" });
 

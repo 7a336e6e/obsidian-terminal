@@ -11,6 +11,7 @@ import {
   VIEW_TYPE_TERMINAL,
   PluginSettings,
   DEFAULT_SETTINGS,
+  SplitDirection,
 } from "./types";
 import { TerminalView } from "./TerminalView";
 import { TerminalSettingTab } from "./settings";
@@ -42,12 +43,14 @@ export default class ObsidianTerminalPlugin extends Plugin {
     await this.applyIntegrationSettings();
 
     this.registerView(VIEW_TYPE_TERMINAL, (leaf) => {
-      return new TerminalView(
+      const view = new TerminalView(
         leaf,
         this.settings,
         this.getVaultBasePath(),
         () => this.getInjectedTerminalEnv()
       );
+      view.onRequestClosePanel = () => this.toggleView();
+      return view;
     });
 
     this.addRibbonIcon("terminal", "Open terminal", () => {
@@ -91,6 +94,30 @@ export default class ObsidianTerminalPlugin extends Plugin {
         const view = this.getTerminalView();
         view?.closeActiveTab();
       },
+    });
+
+    this.addCommand({
+      id: "split-terminal-right",
+      name: "Split terminal right",
+      callback: () => this.splitTerminal("right"),
+    });
+
+    this.addCommand({
+      id: "split-terminal-down",
+      name: "Split terminal down",
+      callback: () => this.splitTerminal("down"),
+    });
+
+    this.addCommand({
+      id: "focus-next-pane",
+      name: "Focus next terminal pane",
+      callback: () => this.getTerminalView()?.getManager().focusPane(1),
+    });
+
+    this.addCommand({
+      id: "focus-previous-pane",
+      name: "Focus previous terminal pane",
+      callback: () => this.getTerminalView()?.getManager().focusPane(-1),
     });
 
     this.addCommand({
@@ -220,6 +247,16 @@ export default class ObsidianTerminalPlugin extends Plugin {
   private newTerminalTab(): void {
     const view = this.getTerminalView();
     view?.createNewTerminal();
+  }
+
+  /** Split the focused pane; with no terminal open yet, just open one. */
+  private splitTerminal(direction: SplitDirection): void {
+    const view = this.getTerminalView();
+    if (view) {
+      view.splitActive(direction);
+    } else {
+      this.activateView();
+    }
   }
 
   private cycleTerminal(direction: 1 | -1): void {
